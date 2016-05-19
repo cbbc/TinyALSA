@@ -20,7 +20,7 @@ int main() {
     snd_pcm_uframes_t frames;  
     char *buffer;  
     FILE *fp ;
-    char *sound_name = "time.wav";
+    char *sound_name = "sound.wav";
 
     if((fp = fopen(sound_name,"r")) < 0)
 	printf("open sound.wav fial\n");
