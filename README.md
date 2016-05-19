@@ -16,3 +16,5 @@ TinyAlas base on Linux ALSA format,for this project we can record and play .wav 
        ./record
    -> Play sound
        ./player
+
+OrangePi .Inc
