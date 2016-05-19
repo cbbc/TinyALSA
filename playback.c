@@ -74,8 +74,6 @@ int main() {
         loops--;  
         rc = fread(buffer,1,size,fp);
 
-	printf("Buffer size %d\n",strlen(buffer));
-        
 	rc = snd_pcm_writei(handle, buffer, frames);
 	printf("RC %d\n",rc);  
 
