@@ -1,154 +1,228 @@
-/* 
-This example reads from the default PCM device 
-and writes to standard output for 5 seconds of data. 
-*/ 
-/* gcc capature.c -lasound -o record */
-/* Use the newer ALSA API */  
+/*
+ * This program reads from the default PCM device
+ * and writes to standard output/stream file for 10 seconds of data.
+ * Compile:
+ *      gcc record.c -lasound -o record
+ */
+
+/* Use the newer ALSA API */
+#define ALSA_PCM_NEW_HW_PARAMS_API
 #include <stdio.h>
-#define ALSA_PCM_NEW_HW_PARAMS_API  
-#include <alsa/asoundlib.h>  
-#include <string.h>
+#include <stdlib.h>
+#include <alsa/asoundlib.h>
 
+#define LENGTH    10   
+#define RATE      44100 //CD 
+#define SIZE      16   
+#define CHANNELS  1   
+#define RSIZE     8    
 
-int main() {  
-    long loops;  
-    int rc,i = 0;  
-    int size;  
-    FILE *fp ;
-    snd_pcm_t *handle;  
-    snd_pcm_hw_params_t *params;  
-    unsigned int val,val2;  
-    int dir;  
-    snd_pcm_uframes_t frames;  
-    char *buffer;  
+/* 
+ * Output settings
+ * STDOUT: stdout,use write,open and read.
+ * STREAMOUT: use stream on fopen,fwrite and fread.
+ */
+#define STDOUT     0
+#define STREAMOUT  1
 
-    if((fp =fopen("sound.wav","w")) < 0)
-	printf("open sound.wav fial\n");
-    /* Open PCM device for recording (capture). */  
-    rc = snd_pcm_open(&handle,"default",SND_PCM_STREAM_CAPTURE, 0);  
-    if (rc < 0) {  
-        fprintf(stderr,  "unable to open pcm device: %s/n",  snd_strerror(rc));  
-        exit(1);  
-    }  
+/******** The WAV format information ******/
+/*------------------------------------------------
+|             RIFF WAVE Chunk                  |
+|             ID = 'RIFF'                     |
+|             RiffType = 'WAVE'                |
+------------------------------------------------
+|             Format Chunk                     |
+|             ID = 'fmt '                      |
+------------------------------------------------
+|             Fact Chunk(optional)             |
+|             ID = 'fact'                      |
+------------------------------------------------
+|             Data Chunk                       |
+|             ID = 'data'                      |
+------------------------------------------------*/
+/*
+ * WAV header structure
+ */
+struct fhead
+{
+    /****RIFF WAVE CHUNK*/
+    unsigned char a[4];
+    long int b;        
+    unsigned char c[4];
+    /****RIFF WAVE CHUNK*/
+    /****Format CHUNK*/
+    unsigned char d[4];
+    long int e;       
+    short int f;       
+    short int g;       
+    long int h;        
+    long int i;        
+    short int j;       
+    short int k;      
+    /****Format CHUNK*/
+    /***Data Chunk**/
+    unsigned char p[4];
+    long int q;       
+} wavehead;
 
-    /* Allocate a hardware parameters object. */  
-    snd_pcm_hw_params_alloca(&params);  
-    /* Fill it in with default values. */  
-    snd_pcm_hw_params_any(handle, params);  
-    /* Set the desired hardware parameters. */  
-    /* Interleaved mode */  
-    snd_pcm_hw_params_set_access(handle,params,SND_PCM_ACCESS_RW_INTERLEAVED);  
-    /* Signed 16-bit little-endian format */  
-    snd_pcm_hw_params_set_format(handle,params,SND_PCM_FORMAT_S16_LE);  
-    /* Two channels (stereo) */  
-    snd_pcm_hw_params_set_channels(handle, params, 2);  
-    /* 44100 bits/second sampling rate (CD quality) */  
-    val = 44100;  
-    snd_pcm_hw_params_set_rate_near(handle,params, &val,&dir);  
-    /* Set period size to 32 frames. */  
-    frames = 32;  
-    snd_pcm_hw_params_set_period_size_near(handle,params,&frames,&dir);  
-    /* Write the parameters to the driver */  
-    rc = snd_pcm_hw_params(handle, params);  
-    if (rc < 0) {  
-        fprintf(stderr,  "unable to set hw parameters: %s/n",  
-        snd_strerror(rc));  
-        exit(1);  
-    } 
- 
-    /* Use a buffer large enough to hold one period */  
-    snd_pcm_hw_params_get_period_size(params,&frames,&dir);  
-    size = frames * 4; /* 2 bytes/sample, 2 channels */  
-    printf("size = %d\n",size);
-    buffer = (char *) malloc(size);  
+/*
+ * Start recored.
+ */
+int startRecord(void)
+{
+    long loops;
+    int rc;
+    int size;
+    snd_pcm_t *handle;
+    snd_pcm_hw_params_t *params;
+    unsigned int val;
+    int dir;
+    snd_pcm_uframes_t frames;
+    char *buffer;
+    int fd_f;
+    int status;
+    FILE *fp;
 
-    /* We want to loop for 5 seconds */  
-    snd_pcm_hw_params_get_period_time(params,&val,&dir);  
-    printf("VAL %d\n",val);
-    loops = 10000000  / val;  
+    /* fill value to wav header */
+    wavehead.a[0] = 'R';
+    wavehead.a[1] = 'I';
+    wavehead.a[2] = 'F';
+    wavehead.a[3] = 'F';
+    wavehead.b    = LENGTH * RATE * CHANNELS * SIZE / 8 - 8;
+    wavehead.c[0] = 'W';
+    wavehead.c[1] = 'A';
+    wavehead.c[2] = 'V';
+    wavehead.c[3] = 'E';
+    wavehead.d[0] = 'f';
+    wavehead.d[1] = 'm';
+    wavehead.d[2] = 't';
+    wavehead.d[3] = ' ';
+    wavehead.e    = 16;
+    wavehead.f    = 1;
+    wavehead.g    = CHANNELS;
+    wavehead.h    = RATE;
+    wavehead.i    = RATE*CHANNELS*SIZE/8;
+    wavehead.j    = CHANNELS*SIZE/8;
+    wavehead.k    = SIZE;
+    wavehead.p[0] = 'd';
+    wavehead.p[1] = 'a';
+    wavehead.p[2] = 't';
+    wavehead.p[3] = 'a';
+    wavehead.q = LENGTH * RATE * CHANNELS * SIZE / 8;
 
-    printf("Start Record.....\n");
-    while (loops > 0) {  
-        loops--;  
+    /* Open PCM device for recording (capture). */
+    rc = snd_pcm_open(&handle, "default",SND_PCM_STREAM_CAPTURE, 0);
+    if (rc < 0) {
+        fprintf(stderr,"unable to open pcm device: %s\n",
+	            snd_strerror(rc));
+        exit(1);
+    }
+
+    /* Allocate a hardware parameters object. */
+    snd_pcm_hw_params_alloca(&params);
+
+    /* Fill it in with default values. */
+    snd_pcm_hw_params_any(handle, params);
+
+    /* Set the desired hardware parameters. */
+
+    /* Interleaved mode */
+    snd_pcm_hw_params_set_access(handle, params,
+	                      SND_PCM_ACCESS_RW_INTERLEAVED);
+
+    /* Signed 16-bit little-endian format */
+    snd_pcm_hw_params_set_format(handle, params,
+	                              SND_PCM_FORMAT_S16_LE);
+
+    /* Two channels (stereo) */
+    snd_pcm_hw_params_set_channels(handle, params, CHANNELS);
+
+    /* 44100 bits/second sampling rate (CD quality) */
+    val = RATE;
+    snd_pcm_hw_params_set_rate_near(handle, params,
+	                                  &val, &dir);
+
+    /* Set period size to 32 frames. */
+    frames = 32;
+    snd_pcm_hw_params_set_period_size_near(handle,params, &frames, &dir);  
+
+    /* Write the parameters to the driver */
+    rc = snd_pcm_hw_params(handle, params);   
+    if (rc < 0) {
+	fprintf(stderr,"unable to set hw parameters: %s\n",
+	            snd_strerror(rc));
+        exit(1);
+    }
+
+    /* Use a buffer large enough to hold one period */
+    snd_pcm_hw_params_get_period_size(params,
+	                                      &frames, &dir);
+    size = frames * 2; /* 2 bytes/sample, 2 channels */
+    buffer = (char *) malloc(size);
+
+    /* We want to loop for 5 seconds */
+    snd_pcm_hw_params_get_period_time(params,
+	                                         &val, &dir);
+    loops = LENGTH * 1000000 / val; 
+
+#if STDOUT
+    if(( fd_f = open("./sound.wav", O_CREAT|O_RDWR,0777))==-1) {
+        perror("cannot creat the sound file");
+    }
+    /* Write the wav header */
+    if((status = write(fd_f, &wavehead, sizeof(wavehead)))==-1) {
+	   perror("write to sound'head wrong!!");
+    }
+#endif
+#if STREAMOUT
+    if((fp = fopen("./sound.wav","w")) < 0)
+	printf("Open sound.wav faild\n");
+    /* Write the wav header */
+    if(fwrite(&wavehead,1,sizeof(wavehead),fp) != sizeof(wavehead))
+	printf("Short warite: wrote bytes\n");
+#endif
+
+    while (loops > 0) { 
+        loops--;
         rc = snd_pcm_readi(handle, buffer, frames);
-        if (rc == -EPIPE) {  
-            /* EPIPE means overrun */  
-            fprintf(stderr, "overrun occurred/n");  
-            snd_pcm_prepare(handle);  
-        } else if (rc < 0) {  
-            fprintf(stderr,"error from read: %s/n",snd_strerror(rc));  
+        if (rc == -EPIPE) {
+            /* EPIPE means overrun */
+            fprintf(stderr, "overrun occurred\n");
+            snd_pcm_prepare(handle);
+        } else if (rc < 0) {
+            fprintf(stderr, "error from read: %s\n",
+                    snd_strerror(rc));
         } else if (rc != (int)frames) {  
-            fprintf(stderr, "short read, read %d frames/n", rc);  
-        }  
- 
-        rc = fwrite(buffer,1,size,fp);
-        if (rc != size)  
-            fprintf(stderr,"short write: wrote %d bytes/n", rc);  
-    }  
+            fprintf(stderr, "short read, read %d frames\n", rc);
+        }
+#if STDOUT
+        if(write(fd_f, buffer, size)==-1) {
+            perror("write to sound wrong!!");
+        }
+#endif
+#if STREAMOUT
+	rc = fwrite(buffer,1,size,fp);
+#endif
+        if (rc != size)
+	      fprintf(stderr,
+	              "short write: wrote %d bytes\n", rc);
+    }
 
-    /******************打印参数*********************/
-    snd_pcm_hw_params_get_channels(params, &val);  
-    printf("channels = %d\n", val);  
-  
-    snd_pcm_hw_params_get_rate(params, &val, &dir);  
-    printf("rate = %d bps\n", val);  
+    snd_pcm_drain(handle);
+    snd_pcm_close(handle);
+    free(buffer);
+#if STDOUT
+    close(fd_f);
+#endif
+#if STREAMOUT
+    fclose(fp);
+#endif
 
-    snd_pcm_hw_params_get_period_time(params,&val, &dir);  
-    printf("period time = %d us\n", val);  
+    return 0;
+}
 
-    snd_pcm_hw_params_get_period_size(params,&frames, &dir);  
-    printf("period size = %d frames\n", (int)frames);  
-
-    snd_pcm_hw_params_get_buffer_time(params,&val, &dir);  
-    printf("buffer time = %d us\n", val);  
-
-    snd_pcm_hw_params_get_buffer_size(params,(snd_pcm_uframes_t *) &val);  
-    printf("buffer size = %d frames\n", val);  
-
-    snd_pcm_hw_params_get_periods(params, &val, &dir);  
-    printf("periods per buffer = %d frames\n", val);  
-
-    snd_pcm_hw_params_get_rate_numden(params,&val, &val2);  
-    printf("exact rate = %d/%d bps\n", val, val2);  
-
-    val = snd_pcm_hw_params_get_sbits(params);  
-    printf("significant bits = %d\n", val);  
-
-    printf("tick time = %d us\n", val);  
-    val = snd_pcm_hw_params_is_batch(params);  
-
-    printf("is batch = %d\n", val);  
-    val = snd_pcm_hw_params_is_block_transfer(params);  
-    printf("is block transfer = %d\n", val);  
-
-    val = snd_pcm_hw_params_is_double(params);  
-    printf("is double = %d\n", val);  
-
-    val = snd_pcm_hw_params_is_half_duplex(params);  
-    printf("is half duplex = %d\n", val);  
-
-    val = snd_pcm_hw_params_is_joint_duplex(params);  
-    printf("is joint duplex = %d\n", val);  
-
-    val = snd_pcm_hw_params_can_overrange(params);  
-    printf("can overrange = %d\n", val);  
-
-    val = snd_pcm_hw_params_can_mmap_sample_resolution(params);  
-    printf("can mmap = %d\n", val);  
-
-    val = snd_pcm_hw_params_can_pause(params);  
-    printf("can pause = %d\n", val);  
-
-    val = snd_pcm_hw_params_can_resume(params);  
-    printf("can resume = %d\n", val);  
-
-    val = snd_pcm_hw_params_can_sync_start(params);  
-    printf("can sync start = %d\n", val);  
-
-    /*******************************************************************/
-    snd_pcm_drain(handle);  
-    snd_pcm_close(handle); 
-    fclose(fp); 
-    free(buffer);  
+int main()
+{
+    startRecord();
     return 0;
 }
